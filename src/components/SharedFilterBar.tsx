@@ -246,12 +246,14 @@ const SharedFilterBar: React.FC<SharedFilterBarProps> = ({ reports, config, filt
             </select>
           </div>
 
-          <button 
-            onClick={clearFilters}
-            className="px-4 py-2 text-xs text-indigo-600 hover:bg-indigo-50 font-black rounded-md transition-colors uppercase tracking-tight h-10 border border-transparent"
-          >
-            RESET
-          </button>
+          <div className="flex gap-2 h-10 w-full items-end mt-4 lg:mt-0">
+             <button 
+               onClick={clearFilters}
+               className="flex-1 px-4 py-2 text-xs text-indigo-600 hover:bg-indigo-50 font-black rounded-md transition-colors uppercase tracking-tight border border-transparent"
+             >
+               RESET FILTRI
+             </button>
+          </div>
         </div>
       </div>
     </div>

@@ -131,8 +131,24 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       setProgress(100);
       if (allExtracted.length > 0) {
+        
+        // Filter out existing duplicates from the extracted dataset
+        const existingIds = new Set(db.segnalazioni.map(s => s.idUnivoco));
+        const existingProtocols = new Set(db.segnalazioni.map(s => s.protocollo.toUpperCase().trim()));
+        
+        const filteredExtracted = allExtracted.filter(r => {
+           const idExist = r.idUnivoco && existingIds.has(r.idUnivoco);
+           const protoExist = r.protocollo && existingProtocols.has(r.protocollo.toUpperCase().trim());
+           return !idExist && !protoExist;
+        });
+
+        if (filteredExtracted.length === 0) {
+           alert("I dati estratti sono già presenti a sistema (doppioni saltati). Non c'è nulla di nuovo da validare.");
+           return;
+        }
+
         // Clean taxomony values from AI tags in case they persist
-        const cleaned = allExtracted.map(r => ({
+        const cleaned = filteredExtracted.map(r => ({
           ...r,
           categoria: (r.categoria || '').replace(' [NUOVO]', '').toUpperCase().trim(),
           modus_operandi_dettaglio: (r.modus_operandi_dettaglio || '').replace(' [NUOVO]', '').toUpperCase().trim(),
@@ -279,12 +295,23 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const sortedReports = [...reports].sort((a, b) => {
     const parse = (dStr: string) => {
-       if (dStr.includes('T')) return new Date(dStr).getTime();
-       const [d, m, yH] = dStr.split('/');
-       const [y, hM] = yH.split(' ');
-       if (!hM) return new Date(Number(y), Number(m)-1, Number(d)).getTime();
+       if (!dStr) return 0;
+       if (dStr.includes('T')) {
+         const d = new Date(dStr);
+         return isNaN(d.getTime()) ? 0 : d.getTime();
+       }
+       const parts = dStr.split('/');
+       if (parts.length < 3) return 0;
+       
+       const d = parts[0];
+       const m = parts[1];
+       const rest = parts[2].split(' ');
+       const y = rest[0];
+       const hM = rest[1] || '00:00';
+       
        const [h, min] = hM.split(':');
-       return new Date(Number(y), Number(m)-1, Number(d), Number(h), Number(min)).getTime();
+       const date = new Date(Number(y), Number(m)-1, Number(d), Number(h) || 0, Number(min) || 0);
+       return isNaN(date.getTime()) ? 0 : date.getTime();
     };
     return parse(b.dataOra) - parse(a.dataOra);
   });
@@ -444,12 +471,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded uppercase">
                     {report.categoria}
                   </span>
+                  {report.modus_operandi_dettaglio && (
+                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded uppercase border border-indigo-100">
+                      {report.modus_operandi_dettaglio}
+                    </span>
+                  )}
+                  {report.tipo_modus_operandi && (
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded uppercase border border-emerald-100">
+                      {report.tipo_modus_operandi}
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400 font-mono">
                     PROT: {report.protocollo || 'N/D'}
                   </span>
                 </div>
 
-                <h3 className="text-lg font-bold text-slate-800 mb-1 truncate">{report.oggetto}</h3>
+                <h3 className="text-lg font-bold text-slate-800 mb-1 truncate uppercase">{report.oggetto}</h3>
                 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
                   <div className="flex items-center gap-2 text-slate-500">

@@ -55,6 +55,7 @@ export interface Segnalazione {
   vittime: Persona[];
   indagati: Persona[];
   requiresRevision?: boolean;
+  isSoloFenomeno?: boolean;
 }
 
 export interface AppDatabase {

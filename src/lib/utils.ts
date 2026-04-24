@@ -45,14 +45,35 @@ export function parseAndFormatDate(dateStr: string): string {
 export const getDayOfWeek = (dateStr: string): string => {
   if (!dateStr) return 'N/D';
   try {
-    let parts: string[] = [];
-    if (dateStr.includes('/')) {
-      parts = dateStr.split(' ')[0].split('/');
-    } else if (dateStr.includes('-')) {
-      parts = dateStr.split(' ')[0].split('-').reverse(); // yyyy-mm-dd fallback
+    let year: number, month: number, day: number;
+    const datePart = dateStr.split(/[ T]/)[0]; // get the first part
+    
+    if (datePart.includes('/')) {
+      // typical DD/MM/YYYY
+      const parts = datePart.split('/');
+      if (parts.length !== 3) return 'N/D';
+      day = Number(parts[0]);
+      month = Number(parts[1]) - 1;
+      year = Number(parts[2]);
+    } else if (datePart.includes('-')) {
+      const parts = datePart.split('-');
+      if (parts.length !== 3) return 'N/D';
+      if (parts[0].length === 4) {
+        // YYYY-MM-DD
+        year = Number(parts[0]);
+        month = Number(parts[1]) - 1;
+        day = Number(parts[2]);
+      } else {
+        // DD-MM-YYYY
+        day = Number(parts[0]);
+        month = Number(parts[1]) - 1;
+        year = Number(parts[2]);
+      }
+    } else {
+      return 'N/D';
     }
-    if (parts.length !== 3) return 'N/D';
-    const date = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+
+    const date = new Date(year, month, day);
     if (isNaN(date.getTime())) return 'N/D';
     const days = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
     return days[date.getDay()];
@@ -67,7 +88,16 @@ export const formatDate = (dateStr?: string) => {
   if (/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/.test(dateStr)) return dateStr;
   
   try {
-    const d = new Date(dateStr);
+    let d: Date;
+    if (/^\d{2}\/\d{2}\/\d{4}/.test(dateStr)) {
+       const parts = dateStr.split(' ');
+       const dParts = parts[0].split('/');
+       const tParts = (parts[1] || '00:00').split(':');
+       d = new Date(Number(dParts[2]), Number(dParts[1])-1, Number(dParts[0]), Number(tParts[0]), Number(tParts[1]));
+    } else {
+       d = new Date(dateStr);
+    }
+
     if (isNaN(d.getTime())) return dateStr;
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -105,7 +135,14 @@ export const getTimeSlot = (dateStr: string): string => {
 
 export const getAge = (dob?: string) => {
   if (!dob) return -1;
-  const birthDate = new Date(dob);
+  let birthDate: Date;
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(dob)) {
+    const [d, m, y] = dob.split('/').map(Number);
+    birthDate = new Date(y, m - 1, d);
+  } else {
+    birthDate = new Date(dob);
+  }
+  
   if (isNaN(birthDate.getTime())) return -1;
   const today = new Date();
   let age = today.getFullYear() - birthDate.getFullYear();

@@ -15,6 +15,7 @@ import {
   X,
   Check
 } from 'lucide-react';
+import { formatDate } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface RevisionViewProps {
@@ -314,7 +315,7 @@ const RevisionView: React.FC<RevisionViewProps> = ({ reports, db, setDb, onUpdat
                        </div>
                        <div className="flex items-center gap-1.5 text-slate-500 text-xs">
                           <Clock size={12} className="text-slate-400" />
-                          <span>{report.dataOra}</span>
+                          <span>{formatDate(report.dataOra)}</span>
                        </div>
                     </div>
                   </div>

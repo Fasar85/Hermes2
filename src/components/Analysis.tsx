@@ -74,9 +74,9 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
   const [isGeneratingIntel, setIsGeneratingIntel] = useState(false);
   const [dynamicCoords, setDynamicCoords] = useState<Record<string, [number, number]>>({});
 
-  // Group reports by comune for map
+  // Group reports by coordinate (preferring specific ones)
   const mapData = useMemo(() => {
-    const groups: Record<string, { reports: Segnalazione[], lat: number, lng: number }> = {};
+    const groups: Record<string, { reports: Segnalazione[], lat: number, lng: number, city: string }> = {};
     const cityCoords: Record<string, [number, number]> = {
       'ROMA': [41.9028, 12.4964], 'MILANO': [45.4642, 9.1900], 'NAPOLI': [40.8518, 14.2681],
       'TORINO': [45.0703, 7.6869], 'FIRENZE': [43.7696, 11.2558], 'PALERMO': [38.1157, 13.3615],
@@ -95,25 +95,37 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
     };
     
     reports.forEach(r => {
-      const city = r.comune.toUpperCase();
-      if (!groups[city]) {
-        let base = cityCoords[city] || dynamicCoords[city];
-        if (!base) {
-           // Provide a temporary fallback while geocoding
-           base = [41.9, 12.5];
-        }
-        groups[city] = { reports: [], lat: base[0], lng: base[1] };
+      const city = r.comune?.toUpperCase() || 'N/D';
+      let lat = 0;
+      let lng = 0;
+
+      if (r.coordinate) {
+        lat = r.coordinate.lat;
+        lng = r.coordinate.lng;
+      } else {
+        const base = cityCoords[city] || dynamicCoords[city] || [41.9, 12.5];
+        lat = base[0];
+        lng = base[1];
       }
-      groups[city].reports.push(r);
+
+      // Key for grouping (round to 4 decimals to catch nearly identical spots)
+      const key = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
+      
+      if (!groups[key]) {
+        groups[key] = { reports: [], lat, lng, city };
+      }
+      groups[key].reports.push(r);
     });
-    return Object.entries(groups).map(([city, data]) => ({ city, ...data }));
+    return Object.values(groups);
   }, [reports, dynamicCoords]);
 
   // Geocoding Effect with rate limiting
   useEffect(() => {
      let isMounted = true;
      const fetchMissingCoords = async () => {
-        const uniqueCities = Array.from(new Set(reports.map(r => r.comune.toUpperCase())));
+        const uniqueCitiesMap = new Map<string, string>();
+        reports.forEach(r => uniqueCitiesMap.set(r.comune.toUpperCase(), r.provincia || ''));
+        const uniqueCities = Array.from(uniqueCitiesMap.keys());
         
         const knownCities = [
           'ROMA', 'MILANO', 'NAPOLI', 'TORINO', 'FIRENZE', 'PALERMO', 'BARI', 'CATANIA', 
@@ -132,7 +144,9 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
                 await new Promise(r => setTimeout(r, 1000));
                 if (!isMounted) break;
 
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&country=Italy&format=json`);
+                const prov = uniqueCitiesMap.get(city) || '';
+                const query = prov ? `${city}, ${prov}, Italy` : `${city}, Italy`;
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`);
                 const data = await response.json();
                 if (data && data.length > 0) {
                    const lat = parseFloat(data[0].lat);
@@ -203,51 +217,87 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
   }, [reports]);
 
   const timeData = useMemo(() => {
-    // Better temporal parsing supporting multiple formats
+    // Trend temporale riferito all'anno
     const counts: Record<string, number> = {};
     reports.forEach(r => {
-      let dateParts: string[] = [];
-      if (r.dataOra.includes('/')) {
-        dateParts = r.dataOra.split(' ')[0].split('/');
-      } else if (r.dataOra.includes('-')) {
-        dateParts = r.dataOra.split(' ')[0].split('-').reverse(); // assume yyyy-mm-dd
+      let year: string = '';
+      if (!r.dataOra) return;
+
+      // Try to extract year from DD/MM/YYYY or YYYY-MM-DD
+      const datePart = (r.dataOra || '').split(/[ T]/)[0];
+      
+      if (datePart.includes('/')) {
+        const parts = datePart.split('/');
+        if (parts.length === 3) {
+          // Check if the last part is the year (4 digits)
+          if (parts[2].length === 4) year = parts[2];
+          else if (parts[0].length === 4) year = parts[0];
+        }
+      } else if (datePart.includes('-')) {
+        const parts = datePart.split('-');
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            year = parts[0];
+          } else {
+            year = parts[2];
+          }
+        }
       }
       
-      if (dateParts.length === 3) {
-        const key = `${dateParts[1]}/${dateParts[2]}`; // MM/AAAA
-        counts[key] = (counts[key] || 0) + 1;
+      // Fallback: try native Date
+      if (!year || isNaN(Number(year))) {
+        try {
+          const d = new Date(r.dataOra);
+          if (!isNaN(d.getTime())) {
+            year = d.getFullYear().toString();
+          }
+        } catch (e) {}
+      }
+      
+      if (year && !isNaN(Number(year))) {
+        counts[year] = (counts[year] || 0) + 1;
       }
     });
     
     return Object.entries(counts)
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => {
-        const [mA, yA] = a.name.split('/').map(Number);
-        const [mB, yB] = b.name.split('/').map(Number);
-        return (yA * 12 + mA) - (yB * 12 + mB);
+      .sort((a, b) => Number(a.name) - Number(b.name));
+  }, [reports]);
+
+  const recurrentIndagatiData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    reports.forEach(r => {
+      r.indagati.forEach(p => {
+        if (p.cognome && p.nome && p.cognome.trim() !== '' && p.nome.trim() !== '') {
+          const fullName = `${p.cognome.toUpperCase().trim()} ${p.nome.toUpperCase().trim()}`;
+          if (fullName.length > 3) {
+             counts[fullName] = (counts[fullName] || 0) + 1;
+          }
+        }
       });
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
   }, [reports]);
 
-  const dayOfWeekData = useMemo(() => {
-    const counts: Record<string, number> = {
-      'Lunedì': 0, 'Martedì': 0, 'Mercoledì': 0, 'Giovedì': 0, 'Venerdì': 0, 'Sabato': 0, 'Domenica': 0
-    };
+  const recurrentVittimeData = useMemo(() => {
+    const counts: Record<string, number> = {};
     reports.forEach(r => {
-      const day = getDayOfWeek(r.dataOra);
-      if (day !== 'N/D') counts[day] = (counts[day] || 0) + 1;
+      r.vittime.forEach(p => {
+        if (p.cognome && p.nome && p.cognome.trim() !== '' && p.nome.trim() !== '') {
+          const fullName = `${p.cognome.toUpperCase().trim()} ${p.nome.toUpperCase().trim()}`;
+          if (fullName.length > 3) {
+             counts[fullName] = (counts[fullName] || 0) + 1;
+          }
+        }
+      });
     });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [reports]);
-
-  const timeSlotData = useMemo(() => {
-    const counts: Record<string, number> = {
-      '00:00 - 06:00': 0, '06:00 - 12:00': 0, '12:00 - 18:00': 0, '18:00 - 24:00': 0
-    };
-    reports.forEach(r => {
-      const slot = getTimeSlot(r.dataOra);
-      if (slot !== 'N/D') counts[slot] = (counts[slot] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
   }, [reports]);
 
   const generateIntel = async () => {
@@ -395,7 +445,7 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
             <h3 className="text-lg font-black text-slate-800 mb-2 flex items-center gap-2">
               <TrendingUp className="text-emerald-500 w-5 h-5" /> Trend Temporale
             </h3>
-            <p className="text-xs text-slate-400 mb-6 font-medium">Evoluzione mensile del volume delle segnalazioni.</p>
+            <p className="text-xs text-slate-400 mb-6 font-medium">Evoluzione annuale del volume delle segnalazioni.</p>
             <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={timeData}>
@@ -418,38 +468,49 @@ const Analysis: React.FC<AnalysisProps> = ({ reports, apiKey, onViewDetails }) =
           </div>
         </div>
 
-        {/* RECORENZE INVESTIGATIVE */}
-        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm col-span-1 lg:col-span-2">
+        {/* RECORENZE INVESTIGATIVE - Nomi Indagati */}
+        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
            <h3 className="text-lg font-black text-slate-800 mb-1 flex items-center gap-2">
-              <Target className="text-red-500 w-5 h-5" /> Ricorrenze Investigative (Pattern Temporali)
+              <Target className="text-orange-500 w-5 h-5" /> Ricorrenze Nomi Indagati
            </h3>
-           <p className="text-xs text-slate-400 mb-8 font-medium">Analisi dei picchi di frequenza settimanale e per fasce orarie.</p>
+           <p className="text-xs text-slate-400 mb-8 font-medium">I 10 indagati ricorrenti con maggiore frequenza.</p>
            
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-              <div className="h-64 h-full">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Giorno della Settimana</p>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dayOfWeekData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} />
-                    <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="h-64 h-full">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Fasce Orarie Critiche</p>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={timeSlotData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{fill: '#f8fafc'}} />
-                    <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+           <div className="h-80 w-full text-xs">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={recurrentIndagatiData} layout="vertical" margin={{ left: 100, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={150} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} />
+                  <Bar dataKey="value" fill="#f97316" radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+              {recurrentIndagatiData.length === 0 && (
+                <div className="flex items-center justify-center h-full text-slate-400 -mt-20 text-[10px] uppercase font-bold">Nessun indagato ricorrente.</div>
+              )}
+           </div>
+        </div>
+
+        {/* RECORENZE INVESTIGATIVE - Nomi Vittime */}
+        <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
+           <h3 className="text-lg font-black text-slate-800 mb-1 flex items-center gap-2">
+              <Target className="text-green-500 w-5 h-5" /> Ricorrenze Nomi Vittime
+           </h3>
+           <p className="text-xs text-slate-400 mb-8 font-medium">Le 10 vittime ricorrenti con maggiore frequenza.</p>
+           
+           <div className="h-80 w-full text-xs">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={recurrentVittimeData} layout="vertical" margin={{ left: 100, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={150} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} />
+                  <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+              {recurrentVittimeData.length === 0 && (
+                <div className="flex items-center justify-center h-full text-slate-400 -mt-20 text-[10px] uppercase font-bold">Nessuna vittima ricorrente.</div>
+              )}
            </div>
         </div>
 

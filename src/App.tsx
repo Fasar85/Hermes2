@@ -14,6 +14,7 @@ import {
   Cpu,
   Save,
   AlertCircle,
+  ShieldAlert,
   Users,
   X,
   ExternalLink,
@@ -31,6 +32,7 @@ import SharedFilterBar from './components/SharedFilterBar';
 import CruscottoView from './components/CruscottoView';
 import UserManager from './components/UserManager';
 import GestioneSegnalazioni from './components/GestioneSegnalazioni';
+import VerificaDB from './components/VerificaDB';
 import LoginFlow from './components/LoginFlow';
 import { HermesLogo } from './components/HermesLogo';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,8 +41,9 @@ const App: React.FC = () => {
   const [db, setDb] = useState<AppDatabase | null>(null);
   const [dbHandle, setDbHandle] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<'cruscotto' | 'schedario' | 'analisi' | 'report' | 'revisioni' | 'gestione' | 'config' | 'utenti'>('cruscotto');
+  const [activeTab, setActiveTab] = useState<'cruscotto' | 'schedario' | 'analisi' | 'report' | 'revisioni' | 'gestione' | 'config' | 'utenti' | 'verifica'>('cruscotto');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [searchingReportId, setSearchingReportId] = useState<string | null>(null);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [newApiKey, setNewApiKey] = useState(currentUser?.apiKey || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -98,11 +101,11 @@ const App: React.FC = () => {
         if (!matchesSearch) return false;
       }
       
-      if (filters.categoria && r.categoria.toUpperCase() !== filters.categoria.toUpperCase()) return false;
-      if (filters.provincia && r.provincia.toUpperCase() !== filters.provincia.toUpperCase()) return false;
-      if (filters.comune && r.comune.toUpperCase() !== filters.comune.toUpperCase()) return false;
-      if (filters.modusOperandi && r.modus_operandi_dettaglio.toUpperCase() !== filters.modusOperandi.toUpperCase()) return false;
-      if (filters.tipoModusOperandi && r.tipo_modus_operandi.toUpperCase() !== filters.tipoModusOperandi.toUpperCase()) return false;
+      if (filters.categoria && (r.categoria || '').toUpperCase().trim() !== filters.categoria.toUpperCase().trim()) return false;
+      if (filters.provincia && (r.provincia || '').toUpperCase().trim() !== filters.provincia.toUpperCase().trim()) return false;
+      if (filters.comune && (r.comune || '').toUpperCase().trim() !== filters.comune.toUpperCase().trim()) return false;
+      if (filters.modusOperandi && (r.modus_operandi_dettaglio || '').toUpperCase().trim() !== filters.modusOperandi.toUpperCase().trim()) return false;
+      if (filters.tipoModusOperandi && (r.tipo_modus_operandi || '').toUpperCase().trim() !== filters.tipoModusOperandi.toUpperCase().trim()) return false;
       
       if (filters.presenzaIndagati === 'si' && r.indagati.length === 0) return false;
       if (filters.presenzaIndagati === 'no' && r.indagati.length > 0) return false;
@@ -135,10 +138,16 @@ const App: React.FC = () => {
       if (filters.dataDa || filters.dataA) {
         // Parse dd/mm/yyyy
         const parseDate = (dStr: string) => {
-           const [d, m, y] = dStr.split('/').map(Number);
+           if (!dStr) return new Date(0);
+           const parts = dStr.split('/');
+           if (parts.length < 3) return new Date(0);
+           const [d, m, y] = parts.map(Number);
            return new Date(y, m - 1, d);
         };
-        const rDate = parseDate(r.dataOra.split(' ')[0]);
+        const dateStr = (r.dataOra || '').split(' ')[0];
+        if (!dateStr) return false;
+        const rDate = parseDate(dateStr);
+        if (isNaN(rDate.getTime())) return false;
         if (filters.dataDa) {
           const dDa = new Date(filters.dataDa);
           if (rDate < dDa) return false;
@@ -196,9 +205,9 @@ const App: React.FC = () => {
     setDb(prev => prev ? { ...prev, comandoName: name } : null);
   };
 
-  const handleGlobalSave = async () => {
+  const handleGlobalSave = async (isQuiet = false) => {
     if (!db) return;
-    setIsSaving(true);
+    if (!isQuiet) setIsSaving(true);
     try {
       const finalDb = { ...db, lastModified: new Date().toLocaleString() };
       
@@ -208,7 +217,7 @@ const App: React.FC = () => {
          await writable.write(JSON.stringify(finalDb, null, 2));
          await writable.close();
          setHasUnsavedChanges(false);
-         alert("Database salvato e aggiornato con successo sul tuo dispositivo!");
+         if (!isQuiet) alert("Database salvato e aggiornato con successo sul tuo dispositivo!");
       } else {
          // Fallback to old download logic if no handle
          const blob = new Blob([JSON.stringify(finalDb, null, 2)], { type: 'application/json' });
@@ -222,13 +231,13 @@ const App: React.FC = () => {
          URL.revokeObjectURL(url);
          
          setHasUnsavedChanges(false);
-         alert("Database scaricato con successo. Sovrascrivi il file originale sul tuo dispositivo.");
+         if (!isQuiet) alert("Database scaricato con successo. Sovrascrivi il file originale sul tuo dispositivo.");
       }
     } catch (error) {
       console.error(error);
-      alert("Errore durante il salvataggio dei dati in locale.");
+      if (!isQuiet) alert("Errore durante il salvataggio dei dati in locale.");
     } finally {
-      setIsSaving(false);
+      if (!isQuiet) setIsSaving(false);
     }
   };
 
@@ -271,6 +280,7 @@ const App: React.FC = () => {
     { id: 'schedario', label: 'Schedario Segnalazioni', icon: FileText },
     { id: 'analisi', label: 'Analisi Fenomenologica', icon: BarChart2 },
     { id: 'report', label: 'Report Investigativo', icon: ClipboardCheck },
+    { id: 'verifica', label: 'Verifica DB', icon: ShieldAlert },
     { id: 'revisioni', label: 'Revisioni', icon: Database, badge: db.segnalazioni.filter(s => s.requiresRevision).length },
     { id: 'gestione', label: 'Gestione Segnalazioni', icon: Key },
     { id: 'config', label: 'Configuratore MO', icon: Settings },
@@ -507,6 +517,8 @@ const App: React.FC = () => {
             {activeTab === 'gestione' && (
               <GestioneSegnalazioni 
                 reports={filteredReports} 
+                initialSearchId={searchingReportId}
+                onClearInitialSearch={() => setSearchingReportId(null)}
                 onUpdateReport={(updated) => {
                   setDb(prev => {
                     const newSeg = prev!.segnalazioni.map(s => s.idUnivoco === updated.idUnivoco ? updated : s);
@@ -528,6 +540,18 @@ const App: React.FC = () => {
                   setDb(prev => ({...prev!, configuratore: newConf}));
                   setHasUnsavedChanges(true);
                 }}
+              />
+            )}
+            {activeTab === 'verifica' && (
+              <VerificaDB 
+                db={db} 
+                setDb={setDb} 
+                onEditReport={(report) => {
+                  setSearchingReportId(report.idUnivoco);
+                  setActiveTab('gestione');
+                }} 
+                onViewReport={setSelectedReport}
+                onAutoSave={() => handleGlobalSave(true)}
               />
             )}
             {activeTab === 'config' && (
@@ -597,13 +621,15 @@ const App: React.FC = () => {
                       <FileText size={32} className="text-indigo-400" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-3 mb-1">
+                      <div className="flex flex-wrap items-center gap-3 mb-1">
                         <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest bg-indigo-500/10 px-2 py-1 rounded">
                           Protocollo: {selectedReport.protocollo}
                         </span>
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{selectedReport.categoria}</span>
+                        {selectedReport.modus_operandi_dettaglio && <><ChevronRight size={12} className="text-slate-400" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{selectedReport.modus_operandi_dettaglio}</span></>}
+                        {selectedReport.tipo_modus_operandi && <><ChevronRight size={12} className="text-slate-400" /><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{selectedReport.tipo_modus_operandi}</span></>}
                       </div>
-                      <h3 className="text-2xl font-black tracking-tight">{selectedReport.oggetto}</h3>
+                      <h3 className="text-2xl font-black tracking-tight uppercase">{selectedReport.oggetto}</h3>
                     </div>
                   </div>
                   <button onClick={() => setSelectedReport(null)} className="p-3 hover:bg-white/10 rounded-2xl transition-colors">
@@ -728,23 +754,6 @@ const App: React.FC = () => {
                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                           <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Data di Nascita</p>
                           <p className="text-sm font-bold text-slate-700">{selectedPersona.dataNascita || 'N/D'}</p>
-                       </div>
-                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                          <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Età</p>
-                          <p className="text-sm font-bold text-slate-700">
-                            {(() => {
-                              if (!selectedPersona.dataNascita) return 'N/D';
-                              try {
-                                const parts = selectedPersona.dataNascita.split('/');
-                                if (parts.length === 3) {
-                                  const birth = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-                                  const age = Math.floor((new Date().getTime() - birth.getTime()) / 31557600000);
-                                  return isNaN(age) ? 'N/D' : age;
-                                }
-                                return 'N/D';
-                              } catch { return 'N/D'; }
-                            })()}
-                          </p>
                        </div>
                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                           <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Luogo di Nascita</p>

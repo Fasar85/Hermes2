@@ -109,7 +109,9 @@ const AnalysisReport: React.FC<AnalysisReportProps> = ({ reports, apiKey, comand
   useEffect(() => {
      let isMounted = true;
      const fetchMissingCoords = async () => {
-        const uniqueCities = Array.from(new Set(reports.map(r => r.comune.toUpperCase())));
+        const uniqueCitiesMap = new Map<string, string>();
+        reports.forEach(r => uniqueCitiesMap.set(r.comune.toUpperCase(), r.provincia || ''));
+        const uniqueCities = Array.from(uniqueCitiesMap.keys());
         
         const knownCities = [
           'ROMA', 'MILANO', 'NAPOLI', 'TORINO', 'FIRENZE', 'PALERMO', 'BARI', 'CATANIA', 
@@ -127,7 +129,9 @@ const AnalysisReport: React.FC<AnalysisReportProps> = ({ reports, apiKey, comand
                 await new Promise(r => setTimeout(r, 1000));
                 if (!isMounted) break;
 
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&country=Italy&format=json`);
+                const prov = uniqueCitiesMap.get(city) || '';
+                const query = prov ? `${city}, ${prov}, Italy` : `${city}, Italy`;
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`);
                 const data = await response.json();
                 if (data && data.length > 0) {
                    const lat = parseFloat(data[0].lat);
