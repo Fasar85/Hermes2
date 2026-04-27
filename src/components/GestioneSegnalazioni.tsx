@@ -80,7 +80,6 @@ const GestioneSegnalazioni: React.FC<GestioneSegnalazioniProps> = ({
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Segnalazione | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
   const [mapSearch, setMapSearch] = useState('');
   const [isSearchingMap, setIsSearchingMap] = useState(false);
 
@@ -203,18 +202,34 @@ const GestioneSegnalazioni: React.FC<GestioneSegnalazioniProps> = ({
     if (initialSearchId) {
       const report = reports.find(r => r.idUnivoco === initialSearchId);
       if (report) {
-        setSearchTerm(report.protocollo || '');
         startEdit(report);
         if (onClearInitialSearch) onClearInitialSearch();
       }
     }
-  }, [initialSearchId, reports]);
+  }, [initialSearchId, reports, onClearInitialSearch]);
 
-  const filteredReports = reports.filter(r => 
-    r.oggetto.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.protocollo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.comune.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const sortedReports = React.useMemo(() => {
+    return [...reports].sort((a, b) => {
+      const parse = (dStr: string) => {
+        if (!dStr) return 0;
+        if (dStr.includes('T')) {
+          const d = new Date(dStr);
+          return isNaN(d.getTime()) ? 0 : d.getTime();
+        }
+        const parts = dStr.split('/');
+        if (parts.length < 3) return 0;
+        const d = parts[0];
+        const m = parts[1];
+        const rest = parts[2].split(' ');
+        const y = rest[0];
+        const hM = rest[1] || '00:00';
+        const [h, min] = hM.split(':');
+        const date = new Date(Number(y), Number(m)-1, Number(d), Number(h) || 0, Number(min) || 0);
+        return isNaN(date.getTime()) ? 0 : date.getTime();
+      };
+      return parse(b.dataOra) - parse(a.dataOra);
+    });
+  }, [reports]);
 
   const validateAndSave = () => {
     if (!editForm) return;
@@ -296,20 +311,10 @@ const GestioneSegnalazioni: React.FC<GestioneSegnalazioniProps> = ({
           </h2>
           <p className="text-sm text-slate-500">Amministrazione totale dell'archivio e rettifica classificazioni.</p>
         </div>
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-          <input 
-            type="text"
-            placeholder="Cerca per oggetto, protocollo o comune..."
-            className="w-full bg-white border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-400 font-medium"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {filteredReports.length === 0 ? (
+        {sortedReports.length === 0 ? (
           <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-16 text-center">
             <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <Search className="text-slate-300 w-10 h-10" />
@@ -320,7 +325,7 @@ const GestioneSegnalazioni: React.FC<GestioneSegnalazioniProps> = ({
             </p>
           </div>
         ) : (
-          filteredReports.map(report => (
+          sortedReports.map(report => (
             <motion.div 
               layout
               key={report.idUnivoco}
